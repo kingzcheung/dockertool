@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use dockertool::image::update_image_file;
+use dockertool::image::PushImage;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -56,7 +56,9 @@ async fn main() {
     match &cli.command {
         Some(Commands::Sync { path }) => {
             println!("Sync path: {}", path);
-            update_image_file(path).await.unwrap();
+            let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN env variable is required");
+            let push_image = PushImage::new(&token, "kingzcheung", "docker_image_pusher").unwrap();
+            push_image.update_image_file(path,None,None).await.unwrap();
         }
         None => {}
     }
