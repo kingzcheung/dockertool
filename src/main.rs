@@ -25,7 +25,14 @@ struct Cli {
 enum Commands {
     /// 同步镜像
     Sync {
-        path: String,
+        /// 镜像名称
+        /// 如 "docker.io/library/nginx:latest"
+        /// 或者 "nginx:latest"
+        image: String,
+        /// github 的推送仓库地址,如 abc/docker_image_pusher
+        /// 需要 fork [kingzcheung/docker_image_pusher](https://github.com/kingzcheung/docker_image_pusher) 到你自己的账户下
+        #[arg(short, long)]
+        pusher: String,
     },
 }
 
@@ -51,17 +58,35 @@ async fn main() {
         _ => println!("Don't be crazy"),
     }
 
-    // You can check for the existence of subcommands, and if found use their
-    // matches just as you would the top level cmd
     match &cli.command {
-        Some(Commands::Sync { path }) => {
-            println!("Sync path: {}", path);
-            let token = std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN env variable is required");
-            let push_image = PushImage::new(&token, "kingzcheung", "docker_image_pusher").unwrap();
-            push_image.update_image_file(path,None,None).await.unwrap();
+        Some(Commands::Sync { image, pusher }) => {
+            println!("Sync path: {}", image);
+            let (owner,repo) = parse_pusher_args(pusher).unwrap();
+            let token =
+                std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN env variable is required");
+            let push_image = PushImage::new(&token, &owner, &repo).unwrap();
+            push_image
+                .update_image_file(image, None, None)
+                .await
+                .unwrap();
         }
         None => {}
     }
 
-    // Continued program logic goes here...
+}
+
+/// 支持 owner/repo
+/// 支持 github 上的 url，如: https://github.com/kingzcheung/docker_image_pusher
+fn parse_pusher_args(pusher: &str) -> anyhow::Result<(String, String)> {
+    let mut push_path = pusher.trim_end_matches('/').to_string();
+    if push_path.starts_with("https://github.com/") {
+        push_path = push_path.replace("https://github.com/", "");
+    }
+
+    let res = push_path.split("/").collect::<Vec<_>>();
+    if res.len() == 2 {
+        return Ok((res[0].to_string(), res[1].to_string()));
+    }
+
+    anyhow::bail!("pusher is not valid")
 }
