@@ -8,6 +8,8 @@ use hyper::HeaderMap;
 use sha2::{Digest, Sha256};
 use url::form_urlencoded;
 
+use crate::schema::RepositoryResult;
+
 const BASIC_DATE_FORMAT: &str = "%Y%m%dT%H%M%SZ";
 const ALGORITHM: &str = "SDK-HMAC-SHA256";
 const HEADER_X_DATE: &str = "X-Sdk-Date";
@@ -55,7 +57,7 @@ fn find_header(headers: &HashMap<String, String>, header: &str) -> Option<String
 }
 
 #[derive(Debug)]
-struct HttpRequest {
+pub struct HttpRequest {
     method: String,
     scheme: String,
     host: String,
@@ -121,9 +123,7 @@ impl HttpRequest {
         }
     }
 
-    pub async fn show_repository(&self) {
-        dbg!(&self.headers);
-
+    pub async fn show_repository(&self) -> anyhow::Result<RepositoryResult> {
         let headers: HeaderMap = self
             .headers
             .iter()
@@ -134,17 +134,20 @@ impl HttpRequest {
                 )
             })
             .collect();
-        let text = self
+        let resp = self
             .http_client
             .get(&self.url)
             .headers(headers)
             .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        println!("{}", text);
+            .await?;
+        let status = resp.status();
+        if status.is_success() {
+            let text = resp.text().await?;
+            Ok(serde_json::from_str(&text)?)
+        } else {
+            let text = resp.text().await?;
+            Err(anyhow::anyhow!("{}", text))
+        }
     }
 }
 
@@ -162,14 +165,14 @@ impl Signer {
     }
 
     pub fn sign(&self, r: &mut HttpRequest) {
-        let heder_time = find_header(&r.headers, HEADER_X_DATE);
+        let header_time = find_header(&r.headers, HEADER_X_DATE);
 
-        let t = match heder_time {
+        let t = match header_time {
             Some(t) => t.parse::<DateTime<Utc>>().unwrap(),
             None => {
                 let t = Utc::now();
                 r.headers.insert(
-                    HEADER_X_DATE.to_string(),
+                    HEADER_X_DATE.to_string().to_lowercase(),
                     t.format(BASIC_DATE_FORMAT).to_string(),
                 );
                 t
@@ -190,7 +193,7 @@ impl Signer {
         let signed_headers = signed_headers(&r.headers);
 
         let canonical_request = canonical_request(r, &signed_headers);
-
+        dbg!(&canonical_request);
         let string_to_sign = string_to_sign(&canonical_request, t);
         let signature = sign_string_to_sign(&string_to_sign, &self.access_key_secret);
         let auth_value = auth_header_value(&signature, &self.access_key_id, &signed_headers);
@@ -235,6 +238,7 @@ fn sign_string_to_sign(string_to_sign: &str, signing_key: &str) -> String {
 
 fn canonical_request(req: &mut HttpRequest, signed_headers: &[String]) -> String {
     let canonical_header = canonical_header(req, signed_headers);
+    dbg!(&canonical_header);
     let hexencode = find_header(&req.headers, HEADER_CONTENT_SHA256)
         .unwrap_or_else(|| hex_encode_sha256_hash(&req.body));
 
@@ -250,6 +254,7 @@ fn canonical_request(req: &mut HttpRequest, signed_headers: &[String]) -> String
 }
 
 fn canonical_header(r: &mut HttpRequest, signed_headers: &[String]) -> String {
+    dbg!(signed_headers);
     let mut a = Vec::new();
     let mut __headers = HashMap::new();
 
@@ -259,6 +264,7 @@ fn canonical_header(r: &mut HttpRequest, signed_headers: &[String]) -> String {
         __headers.insert(key_encoded.clone(), value_encoded.clone());
         // r.headers.insert(key.clone(), value_encoded);
     }
+    dbg!(&__headers);
     for key in signed_headers {
         if let Some(value) = __headers.get(key) {
             a.push(format!("{}:{}", key, value));
@@ -311,7 +317,7 @@ fn canonical_uri(r: &str) -> String {
 }
 
 fn signed_headers(headers: &HashMap<String, String>) -> Vec<String> {
-    let mut keys: Vec<_> = headers.keys().cloned().collect();
+    let mut keys: Vec<_> = headers.keys().map(|x| x.to_lowercase()).collect();
     keys.sort_unstable_by_key(|a| a.to_lowercase());
     keys
 }
@@ -335,10 +341,18 @@ mod test {
             repository = "alpine"
         );
         dbg!(&url);
-        let headers = HashMap::from([("Content-Type".to_string(), "application/json".to_string())]);
+        let headers = HashMap::from([("content-type".to_string(), "application/json".to_string())]);
         let mut r = HttpRequest::new("GET", &url, Some(headers), "");
         sign.sign(&mut r);
 
+        dbg!(&r.headers);
         r.show_repository().await;
+    }
+
+    #[test]
+    fn test_signed_headers() {
+        let headers = HashMap::from([("Content-Type".to_string(), "application/json".to_string())]);
+        let signed_headers = signed_headers(&headers);
+        assert_eq!(signed_headers, vec!["content-type".to_string()]);
     }
 }

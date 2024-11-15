@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use dockertool::image::PushImage;
+use dockertool::{config_path, image::PushImage, set_config, settings};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -23,6 +23,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Config,
     /// 同步镜像
     Sync {
         /// 镜像名称
@@ -32,7 +33,7 @@ enum Commands {
         /// github 的推送仓库地址,如 abc/docker_image_pusher
         /// 需要 fork [kingzcheung/docker_image_pusher](https://github.com/kingzcheung/docker_image_pusher) 到你自己的账户下
         #[arg(short, long)]
-        pusher: String,
+        pusher: Option<String>,
     },
 }
 
@@ -59,20 +60,28 @@ async fn main() {
     }
 
     match &cli.command {
+        Some(Commands::Config) => {
+            ctrlc::set_handler(move || {}).expect("setting Ctrl-C handler");
+
+            if let Err(e) = set_config() {
+                println!("please set config first:{}", e);
+            }
+        }
         Some(Commands::Sync { image, pusher }) => {
-            println!("Sync path: {}", image);
-            let (owner,repo) = parse_pusher_args(pusher).unwrap();
-            let token =
-                std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN env variable is required");
-            let push_image = PushImage::new(&token, &owner, &repo).unwrap();
-            push_image
-                .update_image_file(image, None, None)
-                .await
-                .unwrap();
+            let path = config_path().expect("Home path not found");
+            let settings = settings::load_config(&path).expect("Please set config first");
+
+            let pusher_url = pusher.clone().unwrap_or(settings.github_pusher_repo);
+
+            let (owner, repo) = parse_pusher_args(&pusher_url).unwrap();
+
+            let push_image = PushImage::new(&settings.github_token, &owner, &repo).unwrap();
+            if let Err(e) = push_image.update_image_file(image, None, None).await {
+                println!("error:{e}")
+            }
         }
         None => {}
     }
-
 }
 
 /// 支持 owner/repo
