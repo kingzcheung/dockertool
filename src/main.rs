@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use dockertool::{config_path, image::PushImage, set_config, settings};
+use dockertool::{config_path, get_image_info, image::PushImage, set_config, settings};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -23,6 +23,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Get {
+        /// 镜像名称
+        /// 如 "docker.io/library/nginx:latest"
+        /// 或者 "nginx:latest"
+        image: String,
+    },
+    /// 设置配置
     Config,
     /// 同步镜像
     Sync {
@@ -40,6 +47,8 @@ enum Commands {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let path = config_path().expect("Home path not found");
+    let settings = settings::load_config(&path).expect("Please set config first");
 
     // You can check the value provided by positional arguments, or option arguments
     if let Some(name) = cli.name.as_deref() {
@@ -68,10 +77,8 @@ async fn main() {
             }
         }
         Some(Commands::Sync { image, pusher }) => {
-            let path = config_path().expect("Home path not found");
-            let settings = settings::load_config(&path).expect("Please set config first");
 
-            let pusher_url = pusher.clone().unwrap_or(settings.github_pusher_repo);
+            let pusher_url = pusher.clone().unwrap_or(settings.github_pusher_repo.clone());
 
             let (owner, repo) = parse_pusher_args(&pusher_url).unwrap();
 
@@ -79,6 +86,10 @@ async fn main() {
             if let Err(e) = push_image.update_image_file(image, None, None).await {
                 println!("error:{e}")
             }
+        }
+        Some(Commands::Get { image }) => {
+            println!("get image:{}", image);
+            get_image_info(&settings, image).await.unwrap();
         }
         None => {}
     }

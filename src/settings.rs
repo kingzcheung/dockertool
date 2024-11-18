@@ -1,6 +1,4 @@
 use std::{fs, path::Path};
-
-use anyhow::Context;
 use config::Config;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +12,8 @@ pub struct Settings {
     pub ak:String,
     #[serde(default)]
     pub sk:String,
+    #[serde(default)]
+    pub namespace:String,
 }
 
 pub fn load_config(path: &Path) -> anyhow::Result<Settings> {
